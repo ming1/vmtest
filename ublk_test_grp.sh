@@ -8,9 +8,12 @@ GRP=$1
 
 export TMPDIR=/home/ming/git/linux/temp/data
 echo "first round"
-make -C tools/testing/selftests/ublk JOBS=6 $GRP
+make -C tools/testing/selftests/ublk JOBS=2 $GRP
 #echo "second round"
 #make -C tools/testing/selftests/ublk JOBS=2 $GRP
 
 echo "=== ublk selftest done, ret=$ret ==="
+
+dmesg | tail -n 80
+
 exit $ret

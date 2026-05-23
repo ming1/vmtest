@@ -9,11 +9,12 @@ export LD_LIBRARY_PATH=${UBLKSRVD}/lib/.libs:$LD_LIBRARY_PATH
 
 modprobe ublk_drv
 modprobe vfio_pci
-sleep 1
+sleep 2
 
 UBLK_BPF=${UBLKSRVD}/.libs/ublk.nvme_vfio
 UBLK_CTL=${UBLKSRVD}/.libs/ublk
 
+lspci
 # Find NVMe PCI device
 PCI=$(lspci | grep -i "Non-Volatile\|nvme" | head -1 | awk '{ print $1 }')
 if [ -z "$PCI" ]; then
@@ -25,13 +26,22 @@ echo "=== Found NVMe at ${PCI_ADDR} ==="
 
 # Create ublk device with BPF SQ submission
 echo "=== Creating ublk BPF arena SQ device ==="
-${UBLK_BPF} add --pci ${PCI_ADDR} -q 8 -d 128 $@ &
+${UBLK_BPF} add --pci ${PCI_ADDR} -q 2 -d 128 $@ 2>/tmp/ublk_nvme_err.log &
 KPID=$!
 sleep 3
 
 if [ ! -b /dev/ublkb0 ]; then
 	echo "FAIL: /dev/ublkb0 not created"
-	dmesg | tail -50 | grep -i "ublk\|bpf\|vfio\|arena\|error\|fail" || true
+	echo "=== daemon stderr ==="
+	cat /tmp/ublk_nvme_err.log
+	echo "=== dmesg ==="
+	dmesg | tail -50 | grep -i "ublk\|bpf\|vfio\|arena\|error\|fail\|hugepage\|iommu" || true
+	echo "=== /proc/meminfo hugepage ==="
+	grep -i huge /proc/meminfo || true
+	echo "=== /dev/vfio ==="
+	ls -laR /dev/vfio/ || true
+	echo "=== sysfs vfio-dev ==="
+	ls -la /sys/bus/pci/devices/${PCI_ADDR}/vfio-dev/ 2>&1 || true
 	kill $KPID 2>/dev/null
 	exit 1
 fi
