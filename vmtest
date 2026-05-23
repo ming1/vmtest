@@ -1,0 +1,132 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+#
+# vmtest — entry-point CLI for the vmtest harness.
+#
+# Subcommands:
+#   list                       list available tests with one-line descriptions
+#   run NAME [args...]         run a test inside the VM (default)
+#   run-host NAME [args...]    run a test on the host (e.g. rublk cargo tests)
+#   config                     print effective configuration
+#   help                       show this message
+set -eu
+
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+. "$SELF_DIR/lib/common.sh"
+vt_load_config
+
+usage() {
+	cat <<EOF
+usage: vmtest <command> [args]
+
+Commands:
+  list                       List available tests.
+  run NAME [args...]         Boot KERNEL_DIR under vng and run tests/NAME.sh.
+  run-host NAME [args...]    Run tests/NAME.sh on the host (no VM).
+  config                     Print effective config.
+  help                       This message.
+
+Config:  ${VMTEST_CONF:-$SELF_DIR/vmtest.conf}   (copy vmtest.conf.example to start)
+EOF
+}
+
+# Tests live in tests/NAME.sh. They MAY declare metadata via shell comments
+# at the very top of the file, which `list` parses:
+#
+#   # vmtest-desc: One-line description
+#   # vmtest-requires: ublksrv hugetlb nvme-pci    (space-separated tags)
+test_file() { echo "$SELF_DIR/tests/$1.sh"; }
+
+list_meta() {
+	local field="$1" file="$2"
+	awk -v field="$field" '
+		/^[[:space:]]*$/ { next }
+		/^#!/             { next }
+		/^# *vmtest-/ {
+			sub(/^# *vmtest-/, "")
+			split($0, kv, ":")
+			key = kv[1]
+			sub(/^[^:]*:[[:space:]]*/, "")
+			if (key == field) { print; exit }
+			next
+		}
+		/^[^#]/ { exit }
+	' "$file"
+}
+
+cmd_list() {
+	local f name desc req
+	printf '%-28s  %s\n' "NAME" "DESCRIPTION"
+	printf '%-28s  %s\n' "----" "-----------"
+	for f in "$SELF_DIR"/tests/*.sh; do
+		[ -f "$f" ] || continue
+		name=$(basename "$f" .sh)
+		desc=$(list_meta desc "$f")
+		req=$(list_meta requires "$f")
+		printf '%-28s  %s' "$name" "${desc:-(no description)}"
+		[ -n "$req" ] && printf '  [requires: %s]' "$req"
+		printf '\n'
+	done
+}
+
+cmd_run() {
+	[ $# -ge 1 ] || { usage; exit 2; }
+	local name="$1"; shift
+	local f; f=$(test_file "$name")
+	[ -f "$f" ] || vt_die "no such test: $name (try './vmtest list')"
+	exec "$SELF_DIR/run_vm" "$f" "$@"
+}
+
+cmd_run_host() {
+	[ $# -ge 1 ] || { usage; exit 2; }
+	local name="$1"; shift
+	local f; f=$(test_file "$name")
+	[ -f "$f" ] || vt_die "no such test: $name"
+	local host_ok; host_ok=$(list_meta host "$f")
+	if [ "$host_ok" != "yes" ]; then
+		vt_die "test '$name' is not marked safe for run-host (missing '# vmtest-host: yes')
+       Run-host bypasses the VM and would touch the real host. Use 'run' instead,
+       or add '# vmtest-host: yes' to ${f} if you've verified it's safe."
+	fi
+	exec "$f" "$@"
+}
+
+cmd_config() {
+	cat <<EOF
+KERNEL_DIR      = $KERNEL_DIR
+VMTEST_DATA_DIR = $VMTEST_DATA_DIR
+VMTEST_TMPDIR   = $VMTEST_TMPDIR
+UBLKSRV_DIR     = ${UBLKSRV_DIR:-(unset)}
+FIO_DIR         = ${FIO_DIR:-(unset)}
+RUBLK_DIR       = ${RUBLK_DIR:-(unset)}
+VMTEST_CPUS     = ${VMTEST_CPUS:-16}
+VMTEST_MEM      = ${VMTEST_MEM:-8G}
+VMTEST_VNG      = ${VMTEST_VNG:-vng}
+EOF
+	local vng_bin="${VMTEST_VNG:-vng}"
+	if command -v "$vng_bin" >/dev/null 2>&1; then
+		echo "vng binary      = $(command -v "$vng_bin")"
+	else
+		echo "vng binary      = MISSING (install virtme-ng or set VMTEST_VNG)"
+	fi
+	if [ -d "$KERNEL_DIR" ]; then
+		if [ -f "$KERNEL_DIR/vmlinux" ]; then
+			echo "kernel vmlinux  = OK ($KERNEL_DIR/vmlinux)"
+		else
+			echo "kernel vmlinux  = MISSING (kernel dir exists; build it first)"
+		fi
+	else
+		echo "kernel vmlinux  = MISSING (KERNEL_DIR does not exist)"
+	fi
+}
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+	list)     cmd_list "$@" ;;
+	run)      cmd_run "$@" ;;
+	run-host) cmd_run_host "$@" ;;
+	config)   cmd_config ;;
+	help|-h|--help) usage ;;
+	*) usage; exit 2 ;;
+esac
