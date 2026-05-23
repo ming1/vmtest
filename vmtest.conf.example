@@ -1,0 +1,48 @@
+# vmtest configuration — copy to vmtest.conf and edit.
+#
+# Any of these can also be set in the environment; the environment wins.
+# Paths may use ~ and shell expansions (the file is sourced by bash).
+
+# --- Required ---------------------------------------------------------
+
+# Kernel source tree to boot. Must already be built (vmlinux + modules).
+# If unset, vmtest assumes the repo lives at <kernel>/vmtest/ and uses
+# its parent directory.
+#KERNEL_DIR="$HOME/git/linux"
+
+# --- Optional ---------------------------------------------------------
+
+# Where vmtest stores disk images, hugetlb buffers, scratch files.
+# Exposed to the VM read-write via 9p.
+#VMTEST_DATA_DIR="$(dirname "$BASH_SOURCE")/data"
+
+# Out-of-tree ublksrv build (needed by ublksrv_* and nvme_vfio_* tests).
+# vmtest looks for $UBLKSRV_DIR/.libs/ublk and the .so files under lib/.libs.
+#UBLKSRV_DIR="$HOME/git/ublksrv"
+
+# fio source tree (needed by t_io_uring_* tests that use fio/t/io_uring).
+# Plain `fio` from $PATH is enough for the other fio-based tests.
+#FIO_DIR="$HOME/git/fio"
+
+# Rust ublk crate to run `cargo test` against.
+#RUBLK_DIR="$VMTEST_DATA_DIR/rublk"
+
+# --- VM tuning --------------------------------------------------------
+
+# CPUs / memory passed to vng.
+#VMTEST_CPUS=16
+#VMTEST_MEM=8G
+
+# Extra kernel command-line args appended to the default.
+#VMTEST_KCMDLINE_EXTRA=""
+
+# Path to the vng binary (default: looked up via $PATH).
+#VMTEST_VNG="/opt/virtme-ng/bin/vng"
+
+# Extra QEMU args appended after our IOMMU + extra-disks block.
+# Useful for attaching a passthrough device, extra NIC, etc.
+#VMTEST_QEMU_EXTRA="-device virtio-net-pci,netdev=n0 -netdev user,id=n0"
+
+# Sizes of the auto-created scratch disks (used on first boot only).
+#VMTEST_SDISK_SIZE="2G"
+#VMTEST_NDISK_SIZE="2G"

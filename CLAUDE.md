@@ -4,67 +4,81 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A personal test harness for Linux kernel block-layer / ublk / io_uring work. It is **not** a kernel source tree — it lives at `vmtest/` inside a kernel checkout (e.g. `~/git/linux/vmtest/`). The top-level `.gitignore` is the upstream kernel `.gitignore` and is not authoritative for this directory.
+A standalone harness for running Linux kernel block-layer / ublk / io_uring
+tests under [virtme-ng](https://github.com/arighi/virtme-ng). It is *not* a
+kernel source tree; it sits next to one and boots it. See `README.md` for
+user-facing docs.
 
-All scripts are bash; there is no build step here. The work happens by booting the surrounding kernel tree inside a VM and running shell scripts against it.
-
-## VM execution model
-
-Tests are run via `virtme-ng` (the `vng` binary). The dispatcher is `./run_vm`:
+## Layout (load-bearing)
 
 ```
-./run_vm <kernel-src-dir> <test-script-path> [test-args...]
+vmtest               CLI: list / run / run-host / config (bash)
+run_vm               Low-level: invokes `vng` with our QEMU + kcmdline
+lib/common.sh        All helpers — sourced by every test
+tests/*.sh           One file per test, fronted by `# vmtest-desc:` /
+                     `# vmtest-requires:` metadata comments
+vmtest.conf.example  Sample config; users copy to vmtest.conf (gitignored)
+data/                Runtime scratch (disk images, hugetlb buffers). Gitignored.
 ```
 
-`run_vm` boots `vng` with:
-- `--rwdir` pointing at `./data/` (host directory exposed read-write to the guest via 9p)
-- two extra block devices attached to the VM: SCSI (`data/d1.img`) and NVMe (`data/d2.img`)
-- `intel-iommu` with `caching-mode=on` and `device-iotlb=on` — required for the `vfio_pci` tests
-- 16 CPUs / 8G RAM, `intel_iommu=on` on the kernel command line, zram services masked
-- `--exec` runs the provided test script as root inside the VM
+When adding code, prefer growing `lib/common.sh` over copy-pasting into a
+new test. The `vmtest list` CLI parses the metadata comments at the top
+of each `tests/*.sh` — preserve the exact prefix (`# vmtest-desc:` /
+`# vmtest-requires:`).
 
-Test scripts are designed to run **inside the VM**, not on the host. They reference host paths (e.g. `/home/ming/git/ublksrv/.libs/...`) because the host filesystem is visible through 9p.
+## Execution model
 
-## Test-script families
+1. The user runs `./vmtest run NAME [args]` on the host.
+2. `vmtest` resolves config (`vmtest.conf` + env), then execs `run_vm` with
+   the absolute path to `tests/NAME.sh` plus any extra args.
+3. `run_vm` checks `$KERNEL_DIR/vmlinux`, ensures `data/d1.img` and
+   `data/d2.img` exist (creating them with `truncate` if not), then boots
+   `vng` with:
+   - `--rwdir $VMTEST_DATA_DIR` — host dir visible read-write in guest.
+   - `intel-iommu` enabled in QEMU and on the kernel cmdline.
+   - Extra SCSI + NVMe devices behind the IOMMU.
+   - `--exec "env VAR=val... tests/NAME.sh args..."` — env forwarding,
+     because `vng` does **not** preserve the host environment otherwise.
+4. Inside the VM, the test sources `lib/common.sh`, calls `vt_load_config`
+   to repopulate `$KERNEL_DIR` / `$UBLKSRV_DIR` / etc., declares its
+   requirements via `vt_require_*`, installs the cleanup trap, and runs.
 
-| Script | What it tests |
-|---|---|
-| `ublk_test_grp.sh` | Runs a group of kernel `tools/testing/selftests/ublk` selftests (`make $GRP`). Wired up by commit "ublk: test via group". |
-| `ublk_selftest.sh` | Runs a single ublk selftest by filename pattern. |
-| `io_uring_selftest.sh` | Runs the kernel `tools/testing/selftests/io_uring/runner`. |
-| `loop_autoclear_test.sh` | Stress test for the `losetup -d` race fixed by `sync_blockdev()` in `__loop_clr_fd()` — looks for GPF in `lo_rw_aio` in `dmesg`. |
-| `t_io_uring_htlb_test.sh` | Runs fio's `t/io_uring` with a hugetlbfs-backed buffer (`-H`). |
-| `ublksrv_shmem_zc_test.sh` | Tests `UBLK_F_SHMEM_ZC` against the `ublk.loop` target with hugetlb-registered buffers. |
-| `nvme_vfio_shmem_zc_test.sh` | Same `SHMEM_ZC` path, against the `ublk.nvme_vfio` target (binds the guest's NVMe to `vfio_pci`). |
-| `nvme_vfio_legacy_test.sh` | Same target, but forces the legacy VFIO container path (`--force-legacy`). |
-| `nvme_bpf` | BPF-arena SQ-submission variant of the `nvme_vfio` test. |
-| `rublk_test` | `cd data/rublk && cargo test` — Rust-based ublk tests. |
+## Config resolution
 
-Files ending in `~` are Emacs backups; ignore them.
+`vt_load_config` (in `lib/common.sh`) sources `${VMTEST_CONF:-./vmtest.conf}`
+if present, then fills defaults. **The environment always wins** because
+the `: "${VAR:=default}"` syntax only sets when unset. This means
+`KERNEL_DIR=… ./vmtest run …` is the canonical per-invocation override and
+should be treated as a supported public interface — don't break it.
 
-## External dependencies the scripts assume
+## Conventions for new tests
 
-These paths are hard-coded; if they're missing the test fails immediately.
+- Source `lib/common.sh` with `. "$(dirname "$0")/../lib/common.sh"`. Relative
+  paths inside tests are fragile because `vng` invokes them with an arbitrary
+  cwd; the `dirname "$0"` form is what works.
+- One `vt_install_trap` per test, with cleanup commands pushed via
+  `vt_atexit "cmd"`. Cleanups run LIFO. Do not register your own EXIT trap
+  — it will clobber the cleanup stack.
+- Missing optional deps → `vt_skip` (exit 4); real failures → `vt_die` (exit
+  1) or non-zero exit. Don't conflate the two — `vmtest list` shows
+  requirements precisely so testers know what to install.
+- Out-of-tree binaries (`ublksrv`, `fio/t/io_uring`) belong behind
+  `vt_require_ublksrv` / `vt_require_fio`. Don't hard-code paths under
+  `/home/ming/...` — those are gone for a reason.
+- `set -eu` at the top; `set -x` only when actively debugging.
 
-- `~/git/ublksrv` — built ublksrv tree. The VFIO/SHMEM tests load `ublk`, `ublk.loop`, `ublk.nvme_vfio` from `${UBLKSRVD}/.libs/` and shared libs from `${UBLKSRVD}/lib/.libs/`.
-- `~/git/others/fio` and/or `~/git/fio` — `fio` and `fio/t/io_uring` binaries.
-- `~/git/linux/temp/{data,vng}` — used as `TMPDIR` and as the `--rwdir` target. Disk images and stray binaries (e.g. `temp/data/ublksrv/`) are expected to already exist; the test scripts do not provision them.
-- A working `hugetlbfs` — the SHMEM_ZC and VFIO scripts allocate hugepages on the fly (`echo N > /proc/sys/vm/nr_hugepages`) and mount on `/tmp/hugetlb`.
+## Things that look like bugs but aren't
 
-## Common operations
+- `KERNEL_DIR` defaults to `<repo>/..` not `<repo>/../..` — the convention
+  is that the repo sits inside the kernel tree as `vmtest/`, not two levels
+  deep. (Earlier `run_vm` versions took the kernel path as a positional arg,
+  which is why that pattern was easy to get wrong.)
+- The two extra disk images are lazily created by `run_vm` on first boot,
+  so a freshly-cloned repo will show `data/d{1,2}.img` appearing after the
+  first `./vmtest run`.
 
-- Run a ublk selftest group inside the VM:
-  `./run_vm ~/git/linux ./ublk_test_grp.sh <group-name>`
-- Run a single bash test:
-  `./run_vm ~/git/linux ./loop_autoclear_test.sh 50`
-- Reproduce a VFIO NVMe regression:
-  `./run_vm ~/git/linux ./nvme_vfio_legacy_test.sh`
+## Verification
 
-The kernel-source argument is whichever tree you want booted; `run_vm` itself does not care that it lives inside that tree.
-
-## Conventions worth preserving
-
-- Scripts use `set -ex` (or `set -e`) and a `die()` helper followed by an explicit `cleanup` `trap EXIT` — every test that creates a ublk device / mounts hugetlbfs / allocates a backing file is expected to tear it down even on failure. Keep that pattern when adding new scripts.
-- `dmesg | tail` at the end of a failure path is the standard way of surfacing kernel state from inside the VM; the host never sees the guest's dmesg otherwise.
-- Tests are deliberately tolerant of missing devices (`modprobe ... 2>/dev/null || true`, `[ -b /dev/ublkb0 ]` probes) because the same script is reused across kernels with different config.
-- New tests should be invokable as `./run_vm <kernel> ./new_test.sh [args]` — i.e. accept their own args via `$@`, do their own module loading, and exit non-zero on the first real failure.
+`./vmtest run loop_autoclear` is the dependency-free smoke test — it
+only needs a built kernel and `vng`. Use it to validate harness changes
+before touching the heavier ublksrv/VFIO paths.

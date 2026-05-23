@@ -1,28 +1,71 @@
-TOP=$1
-TESTS=$2
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+#
+# Boot the configured kernel under virtme-ng and run a test script inside.
+#
+# Usage (low-level):
+#   ./run_vm <test-script-inside-vm> [args...]
+#
+# You normally invoke this via `./vmtest run <name>` instead.
+#
+# Requires KERNEL_DIR (from vmtest.conf or env) to point at a built kernel
+# tree. The test script path is resolved on the host; the host fs is
+# visible inside the VM via 9p so any absolute path under the repo works.
+set -eu
 
-shift 2
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+. "$SELF_DIR/lib/common.sh"
+vt_load_config
 
-DATA=${TOP}/temp/data
+if [ $# -lt 1 ]; then
+	echo "usage: $0 <test-script> [args...]" >&2
+	exit 2
+fi
 
-SDISK=${DATA}/d1.img
-NDISK=${DATA}/d2.img
+TEST_CMD="$1"; shift
+
+# Sanity checks before we shell out to vng.
+VNG_BIN="${VMTEST_VNG:-vng}"
+command -v "$VNG_BIN" >/dev/null \
+	|| vt_die "'$VNG_BIN' not found (install virtme-ng or set VMTEST_VNG)"
+[ -d "$KERNEL_DIR" ] \
+	|| vt_die "KERNEL_DIR=$KERNEL_DIR does not exist (set it in vmtest.conf)"
+[ -f "$KERNEL_DIR/vmlinux" ] \
+	|| vt_die "no vmlinux in $KERNEL_DIR — build the kernel first"
+
+# Lazily create the two extra block devices the IOMMU tests want.
+SDISK="$VMTEST_DATA_DIR/d1.img"
+NDISK="$VMTEST_DATA_DIR/d2.img"
+SDISK_SIZE="${VMTEST_SDISK_SIZE:-2G}"
+NDISK_SIZE="${VMTEST_NDISK_SIZE:-2G}"
+[ -f "$SDISK" ] || { vt_log "creating $SDISK ($SDISK_SIZE)"; truncate -s "$SDISK_SIZE" "$SDISK"; }
+[ -f "$NDISK" ] || { vt_log "creating $NDISK ($NDISK_SIZE)"; truncate -s "$NDISK_SIZE" "$NDISK"; }
+
 QEMU_EXTRA="-machine q35,kernel-irqchip=split \
   -device intel-iommu,intremap=on,caching-mode=on,device-iotlb=on \
   -device virtio-scsi-pci,id=scsi_extra,num_queues=32 \
   -device scsi-hd,drive=extra_hd,bus=scsi_extra.0 \
   -drive if=none,id=extra_hd,file=${SDISK},format=raw \
   -drive file=${NDISK},format=raw,if=none,id=nvme_drv \
-  -device nvme,drive=nvme_drv,serial=12345"
+  -device nvme,drive=nvme_drv,serial=12345${VMTEST_QEMU_EXTRA:+ $VMTEST_QEMU_EXTRA}"
 
-vng --run ${TOP} --force-9p \
-  --cpus 16 --memory 8G \
-  --verbose \
-  --rwdir ${DATA} \
-  --user root \
-  --append "intel_iommu=on systemd.mask=dev-zram0.device systemd.mask=systemd-zram-setup@zram0.service" \
-  --exec "${TESTS} $@" \
-  "--qemu-opts=${QEMU_EXTRA}"
+KCMDLINE="intel_iommu=on systemd.mask=dev-zram0.device systemd.mask=systemd-zram-setup@zram0.service${VMTEST_KCMDLINE_EXTRA:+ $VMTEST_KCMDLINE_EXTRA}"
 
-echo "result $?"
-#--systemd \
+export TMPDIR="$VMTEST_TMPDIR"
+
+# Forward config the test scripts may want.
+GUEST_ENV="VMTEST_DATA_DIR=$VMTEST_DATA_DIR"
+[ -n "${UBLKSRV_DIR:-}" ] && GUEST_ENV="$GUEST_ENV UBLKSRV_DIR=$UBLKSRV_DIR"
+[ -n "${FIO_DIR:-}"     ] && GUEST_ENV="$GUEST_ENV FIO_DIR=$FIO_DIR"
+[ -n "${RUBLK_DIR:-}"   ] && GUEST_ENV="$GUEST_ENV RUBLK_DIR=$RUBLK_DIR"
+
+# shellcheck disable=SC2086
+"$VNG_BIN" --run "$KERNEL_DIR" --force-9p \
+	--cpus "${VMTEST_CPUS:-16}" --memory "${VMTEST_MEM:-8G}" \
+	--verbose \
+	--rwdir "$VMTEST_DATA_DIR" \
+	--user root \
+	--append "$KCMDLINE" \
+	--exec "env $GUEST_ENV $TEST_CMD $*" \
+	"--qemu-opts=$QEMU_EXTRA"
