@@ -23,6 +23,18 @@ vt_die()  { printf '[vmtest] FAIL: %s\n' "$*" >&2; exit 1; }
 vt_skip() { printf '[vmtest] SKIP: %s\n' "$*" >&2; exit 4; }
 vt_pass() { printf '[vmtest] PASS: %s\n' "$*" >&2; }
 
+# If VMTEST_HOLD=1 was passed in, block here so the VM stays up for
+# post-mortem inspection (run_vm forwards the env var into the guest).
+# Pair with `VMTEST_SSH=1` on the host invocation; attach with
+#   vng --ssh-client --ssh-tcp
+# from another terminal. Cleanup atexit hooks still run on Ctrl-C.
+vt_hold() {
+	[ -n "${VMTEST_HOLD:-}" ] || return 0
+	vt_log "VMTEST_HOLD=1: pausing. attach with: vng --ssh-client --ssh-tcp"
+	vt_log "  release with: kill -TERM \$\$ (in-guest) or reboot -f"
+	sleep infinity
+}
+
 # ----------------------------------------------------------------------
 # Cleanup stack
 # ----------------------------------------------------------------------

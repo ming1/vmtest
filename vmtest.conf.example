@@ -46,3 +46,15 @@
 # Sizes of the auto-created scratch disks (used on first boot only).
 #VMTEST_SDISK_SIZE="2G"
 #VMTEST_NDISK_SIZE="2G"
+
+# --- Investigation aids -----------------------------------------------
+# These are typically set per-invocation on the command line rather than
+# in the config file, but they're documented here for discoverability.
+#
+# VMTEST_SSH=1   Enable user-mode networking + in-VM sshd. Connect from
+#                another terminal with:  vng --ssh-client --ssh-tcp
+# VMTEST_HOLD=1  Have the test script call `vt_hold` (sleep infinity)
+#                after its body completes -- the VM stays up instead of
+#                powering off, so you can ssh in and inspect kernel state.
+#                Combine the two for live post-mortem:
+#                  VMTEST_SSH=1 VMTEST_HOLD=1 ./vmtest run <name>
