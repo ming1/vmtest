@@ -7,7 +7,7 @@ set -eu
 . "$(dirname "$0")/../lib/common.sh"
 vt_load_config
 vt_require_root
-vt_require_module nbd
+vt_require_module ublk_drv nbd
 vt_require_ublksrv
 vt_require_cmd nbdkit fio nbd-client
 vt_install_trap
