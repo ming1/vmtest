@@ -167,6 +167,40 @@ Add `# vmtest-host: yes` if your test is safe to run on the host
 (i.e. it doesn't touch real devices, modprobe modules, etc.). Without
 that line, `./vmtest run-host NAME` refuses to run as a safeguard.
 
+### Tests that live outside this repo
+
+`run` also accepts a path, so a test can live in the repo it belongs to
+(next to the code it exercises) instead of being registered here:
+
+```sh
+./vmtest -c ~/git/linux-foo/vmtest.conf run ~/git/foo/testing/mytest.sh
+```
+
+Such a script has no relative path back to `lib/`, so it sources the
+helpers through `$VMTEST_DIR` — the checkout root, which `run_vm`
+forwards into the guest:
+
+```sh
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# vmtest-desc: One-line description
+# vmtest-requires: root
+
+. "${VMTEST_DIR:?run me via vmtest}/lib/common.sh"
+vt_load_config
+vt_require_root
+
+# ... test logic ...
+
+vt_pass "mytest"
+```
+
+Everything else is identical — the same helpers, the same exit codes.
+The `:?` gives a clear error if the script is run directly rather than
+through `vmtest`. Note such a test won't appear in `./vmtest list`,
+which only scans `tests/`, and callers need its path rather than a
+short name.
+
 ## Exit codes
 
 Test scripts use the standard kselftest convention:

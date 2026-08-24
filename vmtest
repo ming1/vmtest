@@ -52,7 +52,9 @@ Global options:
 
 Commands:
   list                       List available tests.
-  run NAME [args...]         Boot KERNEL_DIR under vng and run tests/NAME.sh.
+  run NAME|PATH [args...]    Boot KERNEL_DIR under vng and run tests/NAME.sh,
+                             or any executable script given by path (it gets
+                             \$VMTEST_DIR so it can source lib/common.sh).
   run [shell|bash]           Boot KERNEL_DIR under vng and drop into an
                              interactive root shell (also the no-arg default).
   run-host NAME [args...]    Run tests/NAME.sh on the host (no VM).
@@ -63,8 +65,12 @@ Config:  ${VMTEST_CONF:-$SELF_DIR/vmtest.conf}   (copy vmtest.conf.example to st
 EOF
 }
 
-# Tests live in tests/NAME.sh. They MAY declare metadata via shell comments
-# at the very top of the file, which `list` parses:
+# Tests live in tests/NAME.sh. `run` also accepts a path to a script
+# anywhere on disk; such a script sources lib/common.sh via $VMTEST_DIR,
+# which run_vm forwards into the guest.
+#
+# Tests MAY declare metadata via shell comments at the very top of the
+# file, which `list` parses:
 #
 #   # vmtest-desc: One-line description
 #   # vmtest-requires: ublksrv hugetlb nvme-pci    (space-separated tags)
