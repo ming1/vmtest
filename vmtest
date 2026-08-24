@@ -59,9 +59,11 @@ Commands:
                              interactive root shell (also the no-arg default).
   run-host NAME [args...]    Run tests/NAME.sh on the host (no VM).
   config                     Print effective config.
-  env                        Print the resolved paths as shell
-                             assignments, for a caller to eval:
+  env [VAR...]               Print the resolved paths as shell
+                             assignments, for a caller to eval. Names
+                             select individual variables:
                                eval "\$(vmtest -c FILE env)"
+                               eval "\$(vmtest -c FILE env VMTEST_DATA_DIR)"
   help                       This message.
 
 Config:  ${VMTEST_CONF:-$SELF_DIR/vmtest.conf}   (copy vmtest.conf.example to start)
@@ -164,10 +166,28 @@ cmd_run_host() {
 # Values are %q-quoted, so paths with spaces survive. Only the variables
 # vt_load_config exports are listed; unset optional ones are skipped so
 # eval cannot clobber a caller's own value with an empty string.
+#
+# Name variables to emit just those, for a caller that wants one path
+# without eval'ing the rest:
+#
+#   eval "$(vmtest -c my.conf env VMTEST_DATA_DIR)"
+#
+# An unknown name is an error rather than silence, so a typo cannot look
+# like an unset variable.
+VT_ENV_VARS="KERNEL_DIR VMTEST_DATA_DIR VMTEST_TMPDIR \
+UBLKSRV_DIR FIO_DIR LIBURING_DIR RUBLK_DIR"
+
 cmd_env() {
 	local v
-	for v in KERNEL_DIR VMTEST_DATA_DIR VMTEST_TMPDIR \
-		 UBLKSRV_DIR FIO_DIR LIBURING_DIR RUBLK_DIR; do
+	if [ $# -eq 0 ]; then
+		# shellcheck disable=SC2086
+		set -- $VT_ENV_VARS
+	fi
+	for v in "$@"; do
+		case " $VT_ENV_VARS " in
+		*" $v "*) ;;
+		*) vt_die "env: unknown variable '$v' (known: $(echo $VT_ENV_VARS))" ;;
+		esac
 		[ -n "${!v:-}" ] || continue
 		printf 'export %s=%q\n' "$v" "${!v}"
 	done
@@ -210,7 +230,7 @@ case "$cmd" in
 	run)      cmd_run "$@" ;;
 	run-host) cmd_run_host "$@" ;;
 	config)   cmd_config ;;
-	env)      cmd_env ;;
+	env)      cmd_env "$@" ;;
 	help|-h|--help) usage ;;
 	*) usage; exit 2 ;;
 esac

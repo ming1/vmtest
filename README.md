@@ -167,6 +167,27 @@ Add `# vmtest-host: yes` if your test is safe to run on the host
 (i.e. it doesn't touch real devices, modprobe modules, etc.). Without
 that line, `./vmtest run-host NAME` refuses to run as a safeguard.
 
+### Driving vmtest from another script
+
+A script that launches vmtest often needs a path vmtest resolved --
+`VMTEST_DATA_DIR` above all, since that is where the host<->guest marker
+files live, so a host-side runner must write them exactly where the guest
+will look. The config file is sourced inside the vmtest process, so a
+value set there never reaches the caller. Ask for it:
+
+```sh
+eval "$(./vmtest -c my.conf env)"          # all resolved paths
+eval "$(./vmtest -c my.conf env VMTEST_DATA_DIR)"   # just one
+```
+
+`env` emits shell assignments (`config` is for humans -- it mixes in
+diagnostics). Values are shell-quoted, unset optional variables are
+skipped so `eval` cannot blank one the caller already set, and an unknown
+name is an error rather than silence. Do not re-derive these paths: a
+guess like `<vmtest>/data` misses any override, and the failure is quiet
+-- the host writes markers to one directory while the guest reads
+another.
+
 ### Tests that live outside this repo
 
 `run` also accepts a path, so a test can live in the repo it belongs to
