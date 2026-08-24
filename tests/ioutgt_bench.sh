@@ -27,9 +27,9 @@ vt_require_root
 vt_install_trap
 
 IOUTGT_DIR="${IOUTGT_DIR:-$(cat "$VMTEST_TMPDIR/ioutgt_top" 2>/dev/null || true)}"
-[ -n "$IOUTGT_DIR" ] && [ -r "$IOUTGT_DIR/testing/vmtest/ioutgt_connect.sh" ] ||
+[ -n "$IOUTGT_DIR" ] && [ -r "$IOUTGT_DIR/testing/common/ioutgt_connect.sh" ] ||
 	vt_die "ioutgt repo not found at '${IOUTGT_DIR:-<unset>}'"
-. "$IOUTGT_DIR/testing/vmtest/ioutgt_connect.sh"
+. "$IOUTGT_DIR/testing/common/ioutgt_connect.sh"
 
 # Probe path: the host runner passes it via the 9p marker dir (same path
 # mechanism as the checkout dir / port); T_IO_URING overrides it for a
