@@ -59,6 +59,9 @@ Commands:
                              interactive root shell (also the no-arg default).
   run-host NAME [args...]    Run tests/NAME.sh on the host (no VM).
   config                     Print effective config.
+  env                        Print the resolved paths as shell
+                             assignments, for a caller to eval:
+                               eval "\$(vmtest -c FILE env)"
   help                       This message.
 
 Config:  ${VMTEST_CONF:-$SELF_DIR/vmtest.conf}   (copy vmtest.conf.example to start)
@@ -148,6 +151,28 @@ cmd_run_host() {
 	exec "$f" "$@"
 }
 
+# Machine-readable counterpart to `config`: emit the resolved settings as
+# shell assignments, for a host-side caller to eval. Scripts that drive
+# vmtest often need a path it resolved -- VMTEST_DATA_DIR above all, since
+# that is where the host<->guest marker files live -- but the config file
+# is sourced by vt_load_config in THIS process, so a conf-set value never
+# reaches the parent. Without this each caller re-derives it, and a guess
+# like <vmtest>/data silently misses any override.
+#
+#   eval "$(vmtest -c my.conf env)"
+#
+# Values are %q-quoted, so paths with spaces survive. Only the variables
+# vt_load_config exports are listed; unset optional ones are skipped so
+# eval cannot clobber a caller's own value with an empty string.
+cmd_env() {
+	local v
+	for v in KERNEL_DIR VMTEST_DATA_DIR VMTEST_TMPDIR \
+		 UBLKSRV_DIR FIO_DIR LIBURING_DIR RUBLK_DIR; do
+		[ -n "${!v:-}" ] || continue
+		printf 'export %s=%q\n' "$v" "${!v}"
+	done
+}
+
 cmd_config() {
 	cat <<EOF
 KERNEL_DIR      = $KERNEL_DIR
@@ -185,6 +210,7 @@ case "$cmd" in
 	run)      cmd_run "$@" ;;
 	run-host) cmd_run_host "$@" ;;
 	config)   cmd_config ;;
+	env)      cmd_env ;;
 	help|-h|--help) usage ;;
 	*) usage; exit 2 ;;
 esac
